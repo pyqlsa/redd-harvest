@@ -1,0 +1,131 @@
+---
+globals:
+  # Used in the construction of the user-agent; this should coincide with the
+  # name of the associated app created in your reddit account.
+  app: redd-harvest
+  # Used in user-agent and reddit client construction (if username and password
+  # are not provided via environment variables to build a fully authenticated
+  # reddit client).
+  username: <put-your-username-here>
+  # Default post limit; can be overwritten here, or individually at each
+  # redditor/subreddit entry.
+  post_limit: 5
+  # Direct pass-through to praw rate limit max wait setting.
+  rate_limit_max_wait: 300
+  # Seconds to sleep between fetching submisisons from each configured entity
+  # (a redditor or subreddit). This can be used as a 'protective' measure to
+  # reduce the likelihood of running up against the reddit api rate limits,
+  # even though rate limits should be cleanly handled.
+  backoff_sleep: 0.1
+  # Folder to use for saving content retrieved from submissions.
+  download_folder: ~/.redd-harvest/data
+  # By default pruning is disabled; if set to true, pruning of saved media is 
+  # executed before retrieving new posts. Pruning: if we can determine that an
+  # ignored redditor posted in a subreddit that is being followed, attempt to
+  # remove just that redditor's posts from where nested posts would be saved.
+  # If we can determine that a redditor that is being followed has posted in an
+  # ignored subreddit, attempt to remove just posts from that subreddit from
+  # where nested posts would be saved. 'nested' described in more detail below.
+  prune_ignorables: false
+  # When a post is retrieved for an entity (subreddit/redditor), and the post
+  # overlaps with a configured entity of the opposite type, choose which entity
+  # to favor when determining where to store the content from the post. For
+  # example, if user ABC is a redditor we follow, and they also posted content
+  # to a subreddit we're following, it can be chosen whether to favor the
+  # download folder for user ABC or the specific subreddit. Accepted values are
+  # 'redditor', 'subreddit', or 'disabled'. Default is 'redditor'.
+  favor_entity: redditor
+# Individual redditors can be followed the same as subreddits, but none are
+# specified in this example.
+redditors: [] 
+# Specify subreddits to follow (case matters for the value of 'name').
+subreddits:
+  - name: EarthPorn
+    # Within the specified download folder, choose how to store files; 'nested'
+    # means <subreddit>/<redditor> for subreddits, and <redditor>/<subreddit>
+    # for redditors. 'nested' is the default store_type for subreddits.
+    store_type: nested
+    search_criteria:
+      # Post limit specified at the level of each entity takes precedence over
+      # a globally defined post limit.
+      post_limit: 10
+      # Specify how to sort posts when retrieving from the entity, the same as
+      # how you would when browsing reddit.  A special 'stream' option is also
+      # supported which behaves like 'new', but live streams posts as they are
+      # submitted (which has the side effect of ignoring pinned submissions).
+      sort_type: hot
+  - name: wallpaper
+    # Within the specified download folder, you can also choose to store files
+    # in a 'flat' structure; 'flat' means <subreddit> for subreddits, and
+    # <redditor> for redditors. 'flat' is the default store_type for redditors.
+    store_type: flat
+    search_criteria:
+      post_limit: 15
+      sort_type: top
+      # Some sort types ('top'/'controversial') support toggling a time
+      # boundary; supported values are they same as when normally browsing
+      # reddit ('hour', 'day', 'week', 'month', 'year', 'all').
+      sort_toggle: month
+  - name: wallpapers
+    # Within the specified download folder, you can also choose to store files
+    # in a 'really-flat' structure; 'really-flat' means files will be stored in
+    # the root of the download folder.
+    store_type: really-flat
+    search_criteria:
+      post_limit: 10
+      sort_type: top
+      sort_toggle: year
+# Individual redditors can be ignored the same as subreddits, but none are
+# specified in this example. Example situation: I want to follow a specific
+# subreddit, but I don't care for seeing posts from X redditor. Just specify
+# the name of the redditor (case matters). If a redditor is specified both here
+# and in the redditors section, the redditor will be ignored.
+ignored_redditors: []
+# Example situation: I want to follow a specific redditor, but I don't care for
+# seeing their posts in X subreddit. Just specify the name of the subreddit
+# (case matters). If a subreddit is specified both here, and in the subreddits
+# section, the subreddit will be ignored.
+ignored_subreddits:
+  - name: drawing
+  - name: birding
+  - name: wildlifephotography
+# We need to whitelist the urls, file extensions, etc. that we trust and care
+# about saving; it's important that we trust these domains / base urls since
+# we will automatically be downloading content from them.
+links:
+  # If a given post links to a url with this base, ...
+  - base_url: https://i.redd.it
+    # ...then we'll try to directly download it if the url matches the listed
+    # extensions.
+    direct_dl_url_extensions: [ jpg, jpeg, png ]
+  # Galleries are uniquely handled; all gallery items from a given post will be
+  # downloaded (at the highest available quality).
+  - base_url: https://www.reddit.com/gallery
+  # Posts linking to a url with this base will also be entertained...
+  - base_url: https://i.imgur.com
+    # ...and we'll try to directly download content if the url matches the
+    # listed extensions.
+    direct_dl_url_extensions: [ jpg, jpeg, png ]
+    sub_searches:
+      # ...but if the url has this extension, we might be able to find the link
+      # to the original content in the page...
+      - extension: gifv
+        # ...so let's use this regex to try to find the url we really want
+        # within the page. Regexes are treated as raw strings, so no
+        # language-specific care in escaping needs to be taken; if it works on
+        # an online regex tester, there's a good chance it will work here.
+        page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.mp4
+  # Sometimes a site will host content from different domains/subdomains, so
+  # we'll also trust imgur content from this base url...
+  - base_url: https://imgur.com
+    #...and we'll want to directly download the content if it matches these
+    # extensions...
+    direct_dl_url_extensions: [ jpg, jpeg, png ]
+    # ...but if the content doesn't match the direct download extension, we can
+    # use the list of regexes to search the page for the real content
+    # (sub_search extentsions are optional).
+    sub_searches:
+      # let's look for video files...
+      - page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.mp4
+      # ...as well as images.
+      - page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.jpg
