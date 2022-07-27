@@ -191,11 +191,40 @@ def get_matching_urls_from_page(url: str, link: Link) -> typing.List[str]:
     # for debug... else: print(f'\'{lower_url}\' didn\'t match \'{link.base_url.lower()}\'')
     return dl_urls
 
+def get_urls_from_media_reddit_video(post_raw: typing.Dict[str, typing.Any]) -> typing.List[str]:
+    """Extract urls from media.reddit_video for original media."""
+    # debug... print(pprint.pformat(post_raw))
+    dl_urls:typing.List[str] = []
+    video_url = post_raw['media']['reddit_video']['fallback_url']
+    dl_urls.append(video_url.strip())
+    return dl_urls
+
+def get_urls_from_reddit_video(post: Post) -> typing.List[str]:
+    """Get direct download urls from a post when it's a reddit video."""
+    url = post.url
+    post_raw = post.post_raw
+    dl_urls:typing.List[str] = []
+    # extract links from raw post json (if reddit video or crosspost of reddit_video)
+    if post_raw.get('crosspost_parent', False):
+        print(f"- found a crosspost of \'{post_raw.get('crosspost_parent')}\''")
+        try:
+            for cross in post_raw.get('crosspost_parent_list', []):
+                dl_urls.extend(get_urls_from_media_reddit_video(cross))
+        except (KeyError, AttributeError) as e:
+            print(f'- error getting video from (cross)post at {url}: {e}')
+    elif post_raw.get('is_video', False):
+        try:
+            dl_urls.extend(get_urls_from_media_reddit_video(post_raw))
+        except (KeyError, AttributeError) as e:
+            print(f'- error getting video from post at {url}: {e}')
+    return dl_urls
+
 def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[str]:
     """Get urls that point to desired content based on the the given Post and
     the list of Links that define desired matches.
     """
     dl_urls:typing.List[str] = []
+    # debug... print(pprint.pformat(post.post_raw))
     for link in links:
         # a single url should only match one from link list, so return on first
         # match should be safe;
@@ -205,6 +234,9 @@ def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[s
                 return dl_urls
             dl_urls.extend(get_urls_from_gallery(post))
             if len(dl_urls) > 0: # early return for gallery urls if matched
+                return dl_urls
+            dl_urls.extend(get_urls_from_reddit_video(post))
+            if len(dl_urls) > 0: # early return for hosted reddit video if matched
                 return dl_urls
             dl_urls.extend(get_matching_urls_from_page(post.url, link))
     return dl_urls

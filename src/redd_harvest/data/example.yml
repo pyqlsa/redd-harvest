@@ -101,6 +101,9 @@ links:
   # Galleries are uniquely handled; all gallery items from a given post will be
   # downloaded (at the highest available quality).
   - base_url: https://www.reddit.com/gallery
+  # Reddit-hosted videos are also uniquely handled; just specifying the
+  # base_url is sufficient.
+  - base_url: https://v.redd.it
   # Posts linking to a url with this base will also be entertained...
   - base_url: https://i.imgur.com
     # ...and we'll try to directly download content if the url matches the
