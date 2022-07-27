@@ -4,7 +4,7 @@ Download media from Reddit posts.  Why? Why not.
 # Install
 This can be installed using pip:
 ```bash
-pip install --upgrade redd-harvest
+python3 -m pip install --upgrade redd-harvest
 ```
 
 ## Setup from source
