@@ -205,18 +205,19 @@ def get_urls_from_reddit_video(post: Post) -> typing.List[str]:
     post_raw = post.post_raw
     dl_urls:typing.List[str] = []
     # extract links from raw post json (if reddit video or crosspost of reddit_video)
-    if post_raw.get('crosspost_parent', False):
-        print(f"- found a crosspost of \'{post_raw.get('crosspost_parent')}\''")
-        try:
-            for cross in post_raw.get('crosspost_parent_list', []):
-                dl_urls.extend(get_urls_from_media_reddit_video(cross))
-        except (KeyError, AttributeError) as e:
-            print(f'- error getting video from (cross)post at {url}: {e}')
-    elif post_raw.get('is_video', False):
+    if post_raw.get('is_video', False):
         try:
             dl_urls.extend(get_urls_from_media_reddit_video(post_raw))
         except (KeyError, AttributeError) as e:
             print(f'- error getting video from post at {url}: {e}')
+    elif post_raw.get('crosspost_parent', False):
+        print(f"- found a crosspost of \'{post_raw.get('crosspost_parent')}\''")
+        try:
+            for cross in post_raw.get('crosspost_parent_list', []):
+                if post_raw.get('is_video', False):
+                    dl_urls.extend(get_urls_from_media_reddit_video(cross))
+        except (KeyError, AttributeError) as e:
+            print(f'- error getting video from (cross)post at {url}: {e}')
     return dl_urls
 
 def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[str]:
