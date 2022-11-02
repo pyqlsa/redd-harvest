@@ -85,7 +85,7 @@ def get_url_from_page(page: str, subsearch: SubSearch) -> str:
             print(f'- validating matched page contents: {pprint.pformat(match)}')
             if uri_validator(match): # make sure the match is a valid url
                 # return earliest match (some webpages will have duplicate matches)
-                return match
+                return match.replace('&amp;', '&')
             else: print(f'- not a valid url: {match}')
     else: # consider leaving this for debug-only
         print(f'- no matches w/ regex: \'{regex_str}\'')
