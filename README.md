@@ -81,7 +81,7 @@ globals:
   backoff_sleep: 0.1
   # Folder to use for saving content retrieved from submissions.
   download_folder: ~/.redd-harvest/data
-  # By default pruning is disabled; if set to true, pruning of saved media is 
+  # By default pruning is disabled; if set to true, pruning of saved media is
   # executed before retrieving new posts. Pruning: if we can determine that an
   # ignored redditor posted in a subreddit that is being followed, attempt to
   # remove just that redditor's posts from where nested posts would be saved.
@@ -99,7 +99,7 @@ globals:
   favor_entity: redditor
 # Individual redditors can be followed the same as subreddits, but none are
 # specified in this example.
-redditors: [] 
+redditors: []
 # Specify subreddits to follow (case matters for the value of 'name').
 subreddits:
   - name: EarthPorn
@@ -194,6 +194,7 @@ links:
       - page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.mp4
       # ...as well as images.
       - page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.jpg
+
 ```
 
 # Behavior
