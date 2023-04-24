@@ -208,7 +208,7 @@ Media file hashes are calculated before they are written to disk, so this also h
 Another side effect of this scheme is that if you've downloaded some content that you're not interested in keeping, you can prevent `redd-harvest` from continuing to attempt to save the content by truncating the file in place.  If the content is ever encountered again, `redd-harvest` will think it already has a copy because a file name with the SHA1 already exists in the folder.  It's basically a lazy strategy for being able to ignore specific files.
 
 ## How is it intended to run?
-This is designed as a one-shot tool that retrieves content from Reddit serially.  
+This is designed as a one-shot tool that retrieves content from Reddit serially.
 
 Since content retrieval executes serially, a sort of parallelism can be accomplished by running multiple instances each with a separate set of configured redditors and/or subreddits to follow.  In this scenario, content deduplication will likely become more difficult for this tool to figure out itself.  Scaling horizontally in this manner might be easier with something like a containerized deployment.  Providing `redd-harvest` in a container is on the to-do list.
 
