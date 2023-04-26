@@ -28,11 +28,9 @@ def build_praw_client(redd_config: ReddHarvestConfig) -> praw.Reddit:
     """
     cid = os.getenv("REDD_HARVEST_CLIENT_ID")
     cs = os.getenv("REDD_HARVEST_CLIENT_SECRET")
-    if cid is None or cs is None:
-        print(
-            "required client id or client secret not found in environment; aborting..."
-        )
-        return None
+    assert (
+        cid is not None and cs is not None
+    ), "required client id or client secret not found in environment; aborting..."
 
     u = os.getenv("REDD_HARVEST_USERNAME")
     p = os.getenv("REDD_HARVEST_PASSWORD")
@@ -105,7 +103,7 @@ class Harvester:
         """Sets an internal flag for cleanly terminating."""
         return self.interrupt_flag
 
-    def sleep(self, timeout: float = None) -> bool:
+    def sleep(self, timeout: float = 1) -> bool:
         """Wrapper for the per-instance threading.Event()."""
         return self.sleepy.wait(timeout=timeout)
 
@@ -316,12 +314,9 @@ def run(
 
     print(f"using config file: {config}")
     redd_config = gather_config(config)
-    reddit = build_praw_client(redd_config)
-    if reddit is None:
-        return 1
-
     rc = 0
     try:
+        reddit = build_praw_client(redd_config)
         harvester = Harvester(interactive)
         rc = harvester.harvest(
             reddit, redd_config, subreddits_only, redditors_only, only_name
