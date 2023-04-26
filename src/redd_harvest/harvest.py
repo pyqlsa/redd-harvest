@@ -178,8 +178,8 @@ class Harvester:
                 print("- interrupted, quitting early...")
                 break
             try:
-                entity.enrich(reddit)
-                if not entity.is_enriched():
+                entity.validate(reddit)
+                if not entity.is_valid():
                     print(
                         f"- trouble fetching submissions from '{entity.get_name()}'; continuing..."
                     )
@@ -191,7 +191,7 @@ class Harvester:
                 continue
 
             count = 0
-            for submission in entity.get_submissions():
+            for submission in entity.get_submissions(reddit):
                 if self.is_interrupted():
                     print("- interrupted, quitting early...")
                     break

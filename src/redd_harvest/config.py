@@ -114,7 +114,7 @@ class Link(yaml.YAMLObject):
         self.direct_dl_url_extensions: typing.List[str] = conf.get(
             "direct_dl_url_extensions", []
         )
-        searches: typing.List[SubSearch] = conf.get("sub_searches", [])
+        searches: typing.List[typing.Dict[str, str]] = conf.get("sub_searches", [])
         # redundant since we've initialized this above?
         self.sub_searches: typing.List[SubSearch] = []
         for search in searches:
@@ -155,10 +155,10 @@ class EntityInterface(metaclass=abc.ABCMeta):
             and callable(subclass.get_store_type)
             or hasattr(subclass, "get_search_criteria")
             and callable(subclass.get_search_criteria)
-            or hasattr(subclass, "enrich")
-            and callable(subclass.enrich)
-            or hasattr(subclass, "is_enriched")
-            and callable(subclass.is_enriched)
+            or hasattr(subclass, "validate")
+            and callable(subclass.validate)
+            or hasattr(subclass, "is_valid")
+            and callable(subclass.is_valid)
             or hasattr(subclass, "get_submissions")
             and callable(subclass.get_submissions)
             or hasattr(subclass, "get_download_folder")
@@ -192,17 +192,19 @@ class EntityInterface(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich with real data from Reddit"""
+    def validate(self, reddit: praw.Reddit):
+        """Validate against Reddit"""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def is_enriched(self) -> bool:
-        """Whether or not the entity has been successfully enriched with real data from Reddit"""
+    def is_valid(self) -> bool:
+        """Whether or not the entity has been successfully validate against Reddit"""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions (posts) from the entity from Reddit"""
         raise NotImplementedError
 
@@ -246,7 +248,7 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
             # not all sort types supported for redditors; default to new if
             # unsupported
             self.search_criteria.sort_type = NEW
-        self.internal_redditor: praw.reddit.Redditor = None
+        self.valid: bool = False
 
     def is_redditor(self) -> bool:
         return True
@@ -263,48 +265,51 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
     def get_search_criteria(self) -> SearchCriteria:
         return self.search_criteria
 
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich the configured Redditor via a query to reddit."""
+    def validate(self, reddit: praw.Reddit):
+        """Validate the configured Redditor via a query to reddit."""
         print(f"attempting to get user {self.get_name()}")
-        self.internal_redditor = reddit.redditor(self.get_name())
+        r = reddit.redditor(self.get_name())
         rdtr_data = Template(REDDITOR_PRINT_TEMPLATE).substitute(
-            name=self.internal_redditor.name.strip(),
-            id=self.internal_redditor.id.strip(),
-            is_mod=self.internal_redditor.is_mod,
-            is_gold=self.internal_redditor.is_gold,
-            has_verified_email=self.internal_redditor.has_verified_email,
+            name=r.name.strip(),
+            id=r.id.strip(),
+            is_mod=r.is_mod,
+            is_gold=r.is_gold,
+            has_verified_email=r.has_verified_email,
         )
         print(rdtr_data)
+        self.valid = True
 
-    def is_enriched(self) -> bool:
-        """Was this successfully enriched."""
-        return False if self.internal_redditor is None else True
+    def is_valid(self) -> bool:
+        """Is this redditor valid?"""
+        return self.valid
 
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions for the Redditor based on it's configuration."""
         print(
             f"searching submissions from '{self.get_name().strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
         )
         if self.search_criteria.sort_type == NEW:
-            return self.internal_redditor.submissions.new(
+            return reddit.redditor(self.get_name()).submissions.new(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == HOT:
-            return self.internal_redditor.submissions.hot(
+            return reddit.redditor(self.get_name()).submissions.hot(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == TOP:
-            return self.internal_redditor.submissions.top(
+            return reddit.redditor(self.get_name()).submissions.top(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == CONTROVERSIAL:
-            return self.internal_redditor.submissions.controversial(
+            return reddit.redditor(self.get_name()).submissions.controversial(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == STREAM:
-            return self.internal_redditor.stream.submissions()
+            return reddit.redditor(self.get_name()).stream.submissions()
         else:  # default to new
-            return self.internal_redditor.submissions.new(
+            return reddit.redditor(self.get_name()).submissions.new(
                 limit=self.search_criteria.post_limit
             )
 
@@ -321,7 +326,7 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
             self.store_type = STORE_TYPE_NESTED
         sc = conf.get("search_criteria", {})
         self.search_criteria: SearchCriteria = SearchCriteria(default_post_limit, **sc)
-        self.internal_subreddit: praw.reddit.Subreddit = None
+        self.valid: bool = False
 
     def is_redditor(self) -> bool:
         return False
@@ -338,54 +343,65 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
     def get_search_criteria(self) -> SearchCriteria:
         return self.search_criteria
 
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich the configured Subreddit via a query to reddit."""
+    def validate(self, reddit: praw.Reddit):
+        """Validate the configured Subreddit via a query to reddit."""
         print(f"attempting to get subreddit {self.get_name()}")
-        self.internal_subreddit = reddit.subreddit(self.get_name())
+        s = reddit.subreddit(self.get_name())
         subr_data = Template(SUBREDDIT_PRINT_TEMPLATE).substitute(
-            display_name=self.internal_subreddit.display_name.strip(),
-            id=self.internal_subreddit.id.strip(),
-            name=self.internal_subreddit.name.strip(),
-            over18=self.internal_subreddit.over18,
-            description=(self.internal_subreddit.description[:300] + "...")
-            if len(self.internal_subreddit.description) > 300
-            else self.internal_subreddit.description,
+            display_name=s.display_name.strip(),
+            id=s.id.strip(),
+            name=s.name.strip(),
+            over18=s.over18,
+            description=(s.description[:300] + "...")
+            if len(s.description) > 300
+            else s.description,
         )
         print(subr_data)
+        self.valid = True
 
-    def is_enriched(self) -> bool:
-        """Was this successfully enriched."""
-        return False if self.internal_subreddit is None else True
+    def is_valid(self) -> bool:
+        """Is this subreddit valid?"""
+        return self.valid
 
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions for the Subreddit based on it's configuration."""
         print(
-            f"searching submissions from '{self.internal_subreddit.display_name.strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
+            f"searching submissions from '{reddit.subreddit(self.get_name()).display_name.strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
         )
         if self.search_criteria.sort_type == NEW:
-            return self.internal_subreddit.new(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).new(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == HOT:
-            return self.internal_subreddit.hot(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).hot(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == TOP:
-            return self.internal_subreddit.top(
+            return reddit.subreddit(self.get_name()).top(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == CONTROVERSIAL:
-            return self.internal_subreddit.controversial(
+            return reddit.subreddit(self.get_name()).controversial(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == STREAM:
-            return self.internal_subreddit.stream.submissions()
+            return reddit.subreddit(self.get_name()).stream.submissions()
         elif self.search_criteria.sort_type == RISING:
-            return self.internal_subreddit.rising(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).rising(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == RANDOM_RISING:
-            return self.internal_subreddit.random_rising(
+            return reddit.subreddit(self.get_name()).random_rising(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == RANDOM:
-            return self.internal_subreddit.random()
+            return reddit.subreddit(self.get_name()).random()
         else:  # default to new
-            return self.internal_subreddit.new(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).new(
+                limit=self.search_criteria.post_limit
+            )
         # TODO: possibly handle 'front'?
 
 
