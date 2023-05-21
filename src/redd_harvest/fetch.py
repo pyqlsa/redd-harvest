@@ -285,7 +285,7 @@ def retrieve_content(
                     filename = filename[:prop_index]
             _, file_ext = os.path.splitext(filename)
             tmp_data = wget_data(dl_url)
-            tmp_digest = hashlib.sha1(tmp_data).hexdigest()
+            tmp_digest = hashlib.sha256(tmp_data).hexdigest()
             finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
             if os.path.exists(finalfile):
                 result.append(
