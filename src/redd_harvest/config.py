@@ -489,7 +489,7 @@ class ReddHarvestConfig:
                 ignore_folder = (
                     f"{self.globals.download_folder}/{sub.name}/{igr.name.strip()}"
                 )
-                print(f"- checking for folder: {ignore_folder}")
+                # print(f"- checking for folder: {ignore_folder}")
                 if os.path.exists(ignore_folder):
                     print(f"--- removing folder: {ignore_folder}")
                     shutil.rmtree(ignore_folder)
@@ -498,7 +498,7 @@ class ReddHarvestConfig:
                 ignore_folder = (
                     f"{self.globals.download_folder}/{user.name}/{igs.name.strip()}"
                 )
-                print(f"- checking for folder: {ignore_folder}")
+                # print(f"- checking for folder: {ignore_folder}")
                 if os.path.exists(ignore_folder):
                     print(f"--- removing folder: {ignore_folder}")
                     shutil.rmtree(ignore_folder)
