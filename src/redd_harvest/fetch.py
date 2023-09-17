@@ -284,9 +284,12 @@ def retrieve_content(
                 if prop_index > 0:
                     filename = filename[:prop_index]
             _, file_ext = os.path.splitext(filename)
+            file_ext = file_ext.lower()
+            if file_ext == ".jpeg":
+                file_ext = ".jpg"
             tmp_data = wget_data(dl_url)
             tmp_digest = hashlib.sha256(tmp_data).hexdigest()
-            finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext.lower()}"])
+            finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
             # if we already have at least one file with matching digest
             if len(
                 [
