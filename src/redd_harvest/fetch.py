@@ -2,6 +2,7 @@ import hashlib
 import os
 import pprint
 import re
+import sys
 import typing
 
 import urllib3
@@ -287,24 +288,31 @@ def retrieve_content(
             file_ext = file_ext.lower()
             if file_ext == ".jpeg":
                 file_ext = ".jpg"
-            tmp_data = wget_data(dl_url)
-            tmp_digest = hashlib.sha256(tmp_data).hexdigest()
-            finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
-            # if we already have at least one file with matching digest
-            if len(
-                [
-                    file
-                    for file in os.listdir(dl_folder)
-                    if re.search(rf"{tmp_digest}", file)
-                ]
-            ):
-                result.append(
-                    RetrievalStatus(ALREADY_SAVED, dl_url, finalfile, tmp_digest)
-                )
-            else:
-                with open(finalfile, "wb") as out:
-                    out.write(tmp_data)
-                result.append(RetrievalStatus(NEW_SAVED, dl_url, finalfile, tmp_digest))
+            try:
+                tmp_data = wget_data(dl_url)
+                tmp_digest = hashlib.sha256(tmp_data).hexdigest()
+                finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
+                # if we already have at least one file with matching digest
+                if len(
+                    [
+                        file
+                        for file in os.listdir(dl_folder)
+                        if re.search(rf"{tmp_digest}", file)
+                    ]
+                ):
+                    result.append(
+                        RetrievalStatus(ALREADY_SAVED, dl_url, finalfile, tmp_digest)
+                    )
+                else:
+                    with open(finalfile, "wb") as out:
+                        out.write(tmp_data)
+                    result.append(
+                        RetrievalStatus(NEW_SAVED, dl_url, finalfile, tmp_digest)
+                    )
+            except:
+                e = sys.exc_info()[0]
+                print(f"- error fetching content from {post.url}: {e}")
+                result.append(RetrievalStatus(NEW_NOT_SAVED, post.url, "", ""))
     else:
         result.append(RetrievalStatus(NEW_NOT_SAVED, post.url, "", ""))
 
