@@ -10,7 +10,6 @@ from threading import Event
 import traceback
 
 import click
-import pandas as pd
 import praw
 
 from redd_harvest import fetch
@@ -160,9 +159,14 @@ class Harvester:
             if entity_count > 0:
                 remaining = reddit.auth.limits.get("remaining", 0)
                 used = reddit.auth.limits.get("used", 0)
-                reset_timestamp = datetime.fromtimestamp(
-                    reddit.auth.limits.get("reset_timestamp", 0)
-                )
+                ts = reddit.auth.limits.get("reset_timestamp", 0)
+                tsf = 0.0
+                if ts is not None:
+                    try:
+                        tsf = float(ts)
+                    except:
+                        tsf = 0.0
+                reset_timestamp = datetime.fromtimestamp(tsf)
                 print(
                     f"--- current rate limits: remaining - {remaining}, used - {used}, reset_timestamp = '{reset_timestamp}'"
                 )
@@ -214,6 +218,7 @@ class Harvester:
                     print(
                         f"-- status: {dl_status.status}; source_url: {dl_status.source_url}"
                     )
+                    # not sure tracking post stats is interesting anymore
                     post_stats.append(
                         [
                             post.title,
@@ -234,23 +239,6 @@ class Harvester:
                     break
             print(f"--- processed {count} posts from '{entity.get_name()}'")
 
-        # TODO: there's probably something a lot cooler to be done w/ pandas here
-        posts_summary = pd.DataFrame(
-            post_stats,
-            columns=[
-                "title",
-                "author",
-                "subreddit",
-                "url",
-                "body",
-                "created",
-                "status",
-                "content_url",
-                "local_file",
-                "digest",
-            ],
-        )
-        print(posts_summary)
         return 0
 
 
