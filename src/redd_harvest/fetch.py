@@ -5,7 +5,8 @@ import re
 import sys
 import typing
 
-import urllib3
+import requests
+
 from urllib.parse import urlparse
 
 from redd_harvest.config import Link, SubSearch
@@ -27,48 +28,37 @@ class RetrievalStatus:
         self.digest: str = digest
 
 
-# def wget_file(url: str, outfile: str) -> bool:
-#    http = urllib3.PoolManager()
-#    rsp = http.request('GET', url, preload_content=False)
-#    with open(outfile, 'wb') as out:
-#        while True:
-#            data = rsp.read(64)
-#            if not data:
-#                break
-#            out.write(data)
-#    rsp.release_conn()
-#    return True
-
-
-def wget_data(url: str):
+def _wget_data(url: str) -> bytes:
     """Get raw data from the specified url."""
-    # TODO: refactor to use requests instead of urlllib3?
-    http = urllib3.PoolManager()
-    rsp = http.request("GET", url, preload_content=False)  # TODO: handle redirects
-    data = rsp.read()
-    rsp.release_conn()
-    return data
-
-
-def wget_page(url: str) -> str:
-    """Get the page from the given url; if it can't be decoded as a utf-8
-    string, this will fail and simply return an empty string.
-    """
-    # TODO: refactor to use requests instead of urlllib3?
-    # for debug... print(f'fetching page at {url}')
-    http = urllib3.PoolManager()
-    rsp = http.request("GET", url, preload_content=False)
+    data = bytes()
     try:
-        data = rsp.read().decode("utf-8")
-    except UnicodeDecodeError as e:
-        print(f"- page fetch status code: {rsp.status}")
-        print(f"- error decoding page at {url}: {e.reason}")
-        data = ""
-    rsp.release_conn()
+        rsp = requests.get(url, timeout=(5, 8))
+        rsp.raise_for_status()
+        data = rsp.content
+    except requests.exceptions.RequestException as e:
+        # print(f"- page fetch status code: {rsp.status}")
+        print(f"- error decoding page at {url}: {e}")
+    if data is None:
+        data = bytes()
     return data
 
 
-def uri_validator(x: str) -> bool:
+def _wget_page(url: str) -> str:
+    """Get the page from the given url; if an exception occurs, this will fail
+    and simply return an empty string.
+    """
+    data = ""
+    try:
+        rsp = requests.get(url, timeout=(5, 8))
+        rsp.raise_for_status()
+        data = rsp.text
+    except requests.exceptions.RequestException as e:
+        # print(f"- page fetch status code: {rsp.status}")
+        print(f"- error decoding page at {url}: {e}")
+    return data
+
+
+def _uri_validator(x: str) -> bool:
     """Is it a valid URI?"""
     try:
         result = urlparse(x)
@@ -90,7 +80,7 @@ def get_url_from_page(page: str, subsearch: SubSearch) -> str:
         # for debug... print(f'matched page contents: {pprint.pformat(matches)}')
         for match in matches:
             print(f"- validating matched page contents: {pprint.pformat(match)}")
-            if uri_validator(match):  # make sure the match is a valid url
+            if _uri_validator(match):  # make sure the match is a valid url
                 # return earliest match (some webpages will have duplicate matches)
                 return match.replace("&amp;", "&")
             else:
@@ -196,7 +186,7 @@ def get_matching_urls_from_page(url: str, link: Link) -> typing.List[str]:
     """
     lower_url = url.lower()
     dl_urls: typing.List[str] = []
-    page = wget_page(url)
+    page = _wget_page(url)
     for ss in link.sub_searches:
         dl_url: str = ""
         if ss.extension is not None:  # match extension if provided
@@ -289,7 +279,7 @@ def retrieve_content(
             if file_ext == ".jpeg":
                 file_ext = ".jpg"
             try:
-                tmp_data = wget_data(dl_url)
+                tmp_data = _wget_data(dl_url)
                 tmp_digest = hashlib.sha256(tmp_data).hexdigest()
                 finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
                 # if we already have at least one file with matching digest
