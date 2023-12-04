@@ -290,17 +290,14 @@ def retrieve_content(
                     try:
                         data_kind = filetype.guess(tmp_data)
                         if filetype.is_image(tmp_data):
-                            print("DEBUG: detected image file")
                             media_dir = "images"
                             if data_kind is not None:
                                 file_ext = f".{data_kind.extension}"
                         elif filetype.is_video(tmp_data):
-                            print("DEBUG: detected video file")
                             media_dir = "videos"
                             if data_kind is not None:
                                 file_ext = f".{data_kind.extension}"
                         else:
-                            print("DEBUG: unknown filetype")
                             media_dir = "unknown"
                     except:
                         print("ERROR: exception raised while parsing filetype")
