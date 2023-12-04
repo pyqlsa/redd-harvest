@@ -87,6 +87,7 @@ class Globals(yaml.YAMLObject):
         self.download_folder: str = os.path.abspath(
             os.path.expanduser(conf.get("download_folder", DEFAULT_DOWNLOAD_FOLDER))
         )
+        self.separate_media: bool = conf.get("separate_media", True)
         self.bonk: bool = conf.get("bonk", False)
         if not isinstance(self.bonk, bool):
             self.bonk = False
@@ -484,24 +485,138 @@ class ReddHarvestConfig:
         print("---")
         print("pruning detectable content for ignored entities")
         print("---")
-        for sub in self.subreddits:
-            for igr in self.ignored_redditors:
-                ignore_folder = (
-                    f"{self.globals.download_folder}/{sub.name}/{igr.name.strip()}"
+        prune = []
+        for igr in self.ignored_redditors:
+            prune.append(os.sep.join([self.globals.download_folder, igr.name.strip()]))
+            prune.append(
+                os.sep.join([self.globals.download_folder, "images", igr.name.strip()])
+            )
+            prune.append(
+                os.sep.join([self.globals.download_folder, "videos", igr.name.strip()])
+            )
+            prune.append(
+                os.sep.join([self.globals.download_folder, "unknown", igr.name.strip()])
+            )
+            for sub in self.subreddits:
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
                 )
-                # print(f"- checking for folder: {ignore_folder}")
-                if os.path.exists(ignore_folder):
-                    print(f"--- removing folder: {ignore_folder}")
-                    shutil.rmtree(ignore_folder)
-        for user in self.redditors:
-            for igs in self.ignored_subreddits:
-                ignore_folder = (
-                    f"{self.globals.download_folder}/{user.name}/{igs.name.strip()}"
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "images",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
                 )
-                # print(f"- checking for folder: {ignore_folder}")
-                if os.path.exists(ignore_folder):
-                    print(f"--- removing folder: {ignore_folder}")
-                    shutil.rmtree(ignore_folder)
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "videos",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "unknown",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
+                )
+        for igs in self.ignored_subreddits:
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "images",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "videos",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "unknown",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            for user in self.redditors:
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "images",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "videos",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "unknown",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+        for p in prune:
+            if os.path.exists(p):
+                print(f"--- removing folder: {p}")
+                shutil.rmtree(p)
         print("---")
         print()
 
@@ -514,7 +629,14 @@ class ReddHarvestConfig:
                 return True
         return False
 
-    def get_download_folder(self, entity: EntityInterface, post: Post) -> str:
+    def separate_media(self) -> bool:
+        return self.globals.separate_media
+
+    def get_download_root(self) -> str:
+        """Get the root download folder."""
+        return self.globals.download_folder
+
+    def get_download_sub_folder(self, entity: EntityInterface, post: Post) -> str:
         """For a given entity and post, return the folder that should be used
         to save content from the post.
         """
@@ -537,9 +659,10 @@ class ReddHarvestConfig:
                     break
         else:  # else disabled or we can just use as-is
             pass
-        return os.path.normpath(
-            os.sep.join([self.globals.download_folder, dl_sub_folder])
-        )
+        # return os.path.normpath(
+        #    os.sep.join([self.globals.download_folder, dl_sub_folder])
+        # )
+        return os.path.normpath(dl_sub_folder)
 
 
 def gather_config(config_file: str) -> ReddHarvestConfig:

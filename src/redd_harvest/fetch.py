@@ -5,8 +5,8 @@ import re
 import sys
 import typing
 
+import filetype
 import requests
-
 from urllib.parse import urlparse
 
 from redd_harvest.config import Link, SubSearch
@@ -257,14 +257,18 @@ def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[s
 
 
 def retrieve_content(
-    dl_folder: str, post: Post, links: typing.List[Link]
+    sep_by_media: bool,
+    dl_root: str,
+    dl_subdir: str,
+    post: Post,
+    links: typing.List[Link],
 ) -> typing.List[RetrievalStatus]:
     """Attempt to retrieve content from the given post, based on the provided
     list of Links to define desired content, and save matches in the given
     download folder. Returns a status.
     """
     result: typing.List[RetrievalStatus] = []
-    os.makedirs(dl_folder, 0o755, True)
+    os.makedirs(dl_root, 0o755, True)
 
     dl_urls = get_all_matching_urls(post, links)
     if dl_urls is not None and len(dl_urls) > 0:
@@ -281,6 +285,31 @@ def retrieve_content(
             try:
                 tmp_data = _wget_data(dl_url)
                 tmp_digest = hashlib.sha256(tmp_data).hexdigest()
+                media_dir = "."
+                if sep_by_media:
+                    try:
+                        data_kind = filetype.guess(tmp_data)
+                        if filetype.is_image(tmp_data):
+                            print("DEBUG: detected image file")
+                            media_dir = "images"
+                            if data_kind is not None:
+                                file_ext = f".{data_kind.extension}"
+                        elif filetype.is_video(tmp_data):
+                            print("DEBUG: detected video file")
+                            media_dir = "videos"
+                            if data_kind is not None:
+                                file_ext = f".{data_kind.extension}"
+                        else:
+                            print("DEBUG: unknown filetype")
+                            media_dir = "unknown"
+                    except:
+                        print("ERROR: exception raised while parsing filetype")
+                        media_dir = "unknown"
+                dl_folder = os.path.normpath(
+                    os.sep.join([dl_root, media_dir, dl_subdir])
+                )
+                os.makedirs(dl_folder, 0o755, True)
+
                 finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
                 # if we already have at least one file with matching digest
                 if len(

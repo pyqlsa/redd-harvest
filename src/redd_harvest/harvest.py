@@ -210,9 +210,14 @@ class Harvester:
                             fetch.RetrievalStatus(fetch.BONK, post.url, "", "")
                         ]
                     else:
-                        dl_folder = redd_config.get_download_folder(entity, post)
+                        root_folder = redd_config.get_download_root()
+                        sub_folder = redd_config.get_download_sub_folder(entity, post)
                         retrieval_status = fetch.retrieve_content(
-                            f"{dl_folder}", post, redd_config.links
+                            redd_config.separate_media(),
+                            f"{root_folder}",
+                            f"{sub_folder}",
+                            post,
+                            redd_config.links,
                         )
                 for dl_status in retrieval_status:
                     print(

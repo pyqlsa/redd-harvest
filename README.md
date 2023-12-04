@@ -81,6 +81,8 @@ globals:
   backoff_sleep: 0.1
   # Folder to use for saving content retrieved from submissions.
   download_folder: ~/.redd-harvest/data
+  # Within the download folder, store files by media type (image/video).
+  separate_media: true
   # By default pruning is disabled; if set to true, pruning of saved media is
   # executed before retrieving new posts. Pruning: if we can determine that an
   # ignored redditor posted in a subreddit that is being followed, attempt to
