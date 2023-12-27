@@ -1,4 +1,5 @@
 import hashlib
+import io
 import os
 import pprint
 import re
@@ -7,6 +8,7 @@ import typing
 
 import filetype
 import requests
+from tqdm import tqdm
 from urllib.parse import urlparse
 
 from redd_harvest.config import Link, SubSearch
@@ -32,9 +34,22 @@ def _wget_data(url: str) -> bytes:
     """Get raw data from the specified url."""
     data = bytes()
     try:
-        rsp = requests.get(url, timeout=(5, 8))
-        rsp.raise_for_status()
-        data = rsp.content
+        with requests.get(url, stream=True, timeout=(5, 8)) as r:
+            r.raise_for_status()
+            total_size_bytes = int(r.headers.get("content-length", 0))
+            block_size = 16384  # 16 kibibytes
+            progress_bar = tqdm(
+                total=total_size_bytes, unit="iB", unit_scale=True, colour="#196593"
+            )
+            # figure out better way of handling for extremely large file case
+            with io.BytesIO() as buf:
+                for chunk in r.iter_content(chunk_size=block_size):
+                    # If you have chunk encoded response uncomment if
+                    # and set chunk_size parameter to None.
+                    # if chunk:
+                    progress_bar.update(len(chunk))
+                    buf.write(chunk)
+                data = buf.getvalue()
     except requests.exceptions.RequestException as e:
         # print(f"- page fetch status code: {rsp.status}")
         print(f"- error decoding page at {url}: {e}")
