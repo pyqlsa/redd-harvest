@@ -30,7 +30,7 @@ class RetrievalStatus:
         self.digest: str = digest
 
 
-def _wget_data(url: str) -> bytes:
+def _wget_data(url: str, progress_bar: tqdm) -> bytes:
     """Get raw data from the specified url."""
     data = bytes()
     try:
@@ -38,9 +38,8 @@ def _wget_data(url: str) -> bytes:
             r.raise_for_status()
             total_size_bytes = int(r.headers.get("content-length", 0))
             block_size = 16384  # 16 kibibytes
-            progress_bar = tqdm(
-                total=total_size_bytes, unit="iB", unit_scale=True, colour="#196593"
-            )
+            progress_bar.total = total_size_bytes
+            progress_bar.refresh()
             # figure out better way of handling for extremely large file case
             with io.BytesIO() as buf:
                 for chunk in r.iter_content(chunk_size=block_size):
@@ -329,8 +328,9 @@ def retrieve_content(
     if dl_urls is not None and len(dl_urls) > 0:
         for dl_url in dl_urls:
             filename = _filename_from_url(dl_url)
+            progress_bar = tqdm(unit="iB", unit_scale=True, colour="#546975")
             try:
-                tmp_data = _wget_data(dl_url)
+                tmp_data = _wget_data(dl_url, progress_bar)
                 tmp_digest = hashlib.sha256(tmp_data).hexdigest()
                 media_dir, file_ext = _dir_and_ext_by_type(
                     tmp_data, filename, sep_by_media
@@ -357,10 +357,16 @@ def retrieve_content(
                     result.append(
                         RetrievalStatus(NEW_SAVED, dl_url, finalfile, tmp_digest)
                     )
+                    progress_bar.colour = "#196593"
+                    progress_bar.refresh()
+                progress_bar.close()
             except:
                 e = sys.exc_info()[0]
                 print(f"- error fetching content from {post.url}: {e}")
                 result.append(RetrievalStatus(NEW_NOT_SAVED, post.url, "", ""))
+                progress_bar.colour = "#9042f5"
+                progress_bar.refresh()
+                progress_bar.close()
     else:
         result.append(RetrievalStatus(NEW_NOT_SAVED, post.url, "", ""))
 
