@@ -271,6 +271,46 @@ def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[s
     return dl_urls
 
 
+def _filename_from_url(dl_url: str) -> str:
+    """Returns name of the file from the given url and removes properties,
+    if they exist in the url."""
+    filename = os.path.basename(dl_url)
+    if "?" in filename:
+        prop_index = filename.index("?")
+        if prop_index > 0:
+            filename = filename[:prop_index]
+    return filename
+
+
+def _dir_and_ext_by_type(
+    tmp_data: bytes, filename: str, sep_by_media: bool
+) -> typing.Tuple[str, str]:
+    """Given the file bytes and filename, determines a folder to sort media
+    into and determines an appropriate file extension."""
+    _, file_ext = os.path.splitext(filename)
+    file_ext = file_ext.lower()
+    if file_ext == ".jpeg":
+        file_ext = ".jpg"
+    media_dir = "."
+    if sep_by_media:
+        try:
+            data_kind = filetype.guess(tmp_data)
+            if filetype.is_image(tmp_data):
+                media_dir = "images"
+                if data_kind is not None:
+                    file_ext = f".{data_kind.extension}"
+            elif filetype.is_video(tmp_data):
+                media_dir = "videos"
+                if data_kind is not None:
+                    file_ext = f".{data_kind.extension}"
+            else:
+                media_dir = "unknown"
+        except:
+            print("ERROR: exception raised while parsing filetype")
+            media_dir = "unknown"
+    return media_dir, file_ext
+
+
 def retrieve_content(
     sep_by_media: bool,
     dl_root: str,
@@ -288,40 +328,17 @@ def retrieve_content(
     dl_urls = get_all_matching_urls(post, links)
     if dl_urls is not None and len(dl_urls) > 0:
         for dl_url in dl_urls:
-            filename = os.path.basename(dl_url)
-            if "?" in filename:
-                prop_index = filename.index("?")
-                if prop_index > 0:
-                    filename = filename[:prop_index]
-            _, file_ext = os.path.splitext(filename)
-            file_ext = file_ext.lower()
-            if file_ext == ".jpeg":
-                file_ext = ".jpg"
+            filename = _filename_from_url(dl_url)
             try:
                 tmp_data = _wget_data(dl_url)
                 tmp_digest = hashlib.sha256(tmp_data).hexdigest()
-                media_dir = "."
-                if sep_by_media:
-                    try:
-                        data_kind = filetype.guess(tmp_data)
-                        if filetype.is_image(tmp_data):
-                            media_dir = "images"
-                            if data_kind is not None:
-                                file_ext = f".{data_kind.extension}"
-                        elif filetype.is_video(tmp_data):
-                            media_dir = "videos"
-                            if data_kind is not None:
-                                file_ext = f".{data_kind.extension}"
-                        else:
-                            media_dir = "unknown"
-                    except:
-                        print("ERROR: exception raised while parsing filetype")
-                        media_dir = "unknown"
+                media_dir, file_ext = _dir_and_ext_by_type(
+                    tmp_data, filename, sep_by_media
+                )
                 dl_folder = os.path.normpath(
                     os.sep.join([dl_root, media_dir, dl_subdir])
                 )
                 os.makedirs(dl_folder, 0o755, True)
-
                 finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
                 # if we already have at least one file with matching digest
                 if len(
