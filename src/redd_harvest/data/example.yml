@@ -47,6 +47,10 @@ subreddits:
     # means <subreddit>/<redditor> for subreddits, and <redditor>/<subreddit>
     # for redditors. 'nested' is the default store_type for subreddits.
     store_type: nested
+    # When creating a folder for the downloaded files, use this as the folder
+    # name rather than the name of the subreddit/redditor; this is ignored when
+    # using store_type 'really flat' (see below).
+    alias: earthpapes
     search_criteria:
       # Post limit specified at the level of each entity takes precedence over
       # a globally defined post limit.

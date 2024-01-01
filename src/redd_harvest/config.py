@@ -152,6 +152,8 @@ class EntityInterface(metaclass=abc.ABCMeta):
             and callable(subclass.is_subreddit)
             or hasattr(subclass, "get_name")
             and callable(subclass.get_name)
+            or hasattr(subclass, "get_alias")
+            and callable(subclass.get_alias)
             or hasattr(subclass, "get_store_type")
             and callable(subclass.get_store_type)
             or hasattr(subclass, "get_search_criteria")
@@ -180,6 +182,11 @@ class EntityInterface(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def get_name(self) -> str:
         """Name of the entity"""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_alias(self) -> str:
+        """Alias of the entity"""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -213,20 +220,14 @@ class EntityInterface(metaclass=abc.ABCMeta):
         """Determine the intended download folder based on the provided post
         author and name of the subreddit where it was posted.
         """
-        dl_folder = post_author
-
-        if self.get_store_type() == STORE_TYPE_REALLY_FLAT:
-            dl_folder = "."
-        elif self.is_redditor():
-            dl_folder = os.sep.join([post_author, post_subreddit_name])
-            if self.get_store_type() == STORE_TYPE_FLAT:
-                dl_folder = post_author
-        elif self.is_subreddit():
-            dl_folder = os.sep.join([post_subreddit_name, post_author])
-            if self.get_store_type() == STORE_TYPE_FLAT:
-                dl_folder = post_subreddit_name
-
-        return f"{dl_folder}"
+        if self.get_store_type() == STORE_TYPE_FLAT:
+            return self.get_alias()
+        elif self.is_redditor() and self.get_store_type() == STORE_TYPE_FLAT:
+            return os.sep.join([self.get_alias(), post_subreddit_name])
+        elif self.is_subreddit() and self.get_store_type() == STORE_TYPE_FLAT:
+            return os.sep.join([self.get_alias(), post_author])
+        # STORE_TYPE_REALLY_FLAT
+        return "."
 
 
 class EntityMeta(type(yaml.YAMLObject), type(EntityInterface)):
@@ -238,6 +239,7 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def __init__(self, default_post_limit=DEFAULT_POST_LIMIT, **conf):
         self.name: str = conf.get("name", None)
+        self.alias: str = conf.get("alias", self.name)
         # redditors default to flat when not specified
         self.store_type: str = conf.get("store_type", STORE_TYPE_FLAT)
         if self.store_type not in STORE_TYPES:
@@ -259,6 +261,9 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def get_name(self) -> str:
         return self.name
+
+    def get_alias(self) -> str:
+        return self.alias
 
     def get_store_type(self) -> str:
         return self.store_type
@@ -320,6 +325,7 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def __init__(self, default_post_limit=DEFAULT_POST_LIMIT, **conf):
         self.name: str = conf.get("name", None)
+        self.alias: str = conf.get("alias", self.name)
         # subreddits default to nested when not specified
         self.store_type: str = conf.get("store_type", STORE_TYPE_NESTED)
         if self.store_type not in STORE_TYPES:
@@ -337,6 +343,9 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def get_name(self) -> str:
         return self.name
+
+    def get_alias(self) -> str:
+        return self.alias
 
     def get_store_type(self) -> str:
         return self.store_type
@@ -659,9 +668,6 @@ class ReddHarvestConfig:
                     break
         else:  # else disabled or we can just use as-is
             pass
-        # return os.path.normpath(
-        #    os.sep.join([self.globals.download_folder, dl_sub_folder])
-        # )
         return os.path.normpath(dl_sub_folder)
 
 
