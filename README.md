@@ -30,8 +30,8 @@ Commands:
   setup  Bootstrap an example config in the default location.
 
 Options for 'run':
-  -c, --config FILE      Path to config file (default: ~/.redd-
-                         harvest/config/redd.yml).
+  -c, --config FILE      Path to config file (default: ~/.config/redd-
+                         harvest/config.yml).
   -s, --subreddits-only  Only download from configured subreddits (useful in
                          testing).
   -r, --redditors-only   Only download from configured redditors (useful in

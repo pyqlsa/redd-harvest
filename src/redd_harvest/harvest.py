@@ -17,7 +17,7 @@ from redd_harvest.config import ReddHarvestConfig, gather_config
 from redd_harvest.post import Post
 from redd_harvest.version import __version__
 
-DEFAULT_CONFIG_FILE = os.sep.join(["~", ".redd-harvest", "config", "redd.yml"])
+DEFAULT_CONFIG_FILE = os.sep.join(["~", ".config", "redd-harvest", "config.yml"])
 REDD_HARVEST_USER_AGENT_TEMPLATE = "python:$app:$ver (by /u/$username)"
 
 
