@@ -690,24 +690,24 @@ def gather_config(config_file: str) -> ReddHarvestConfig:
     global_config = Globals(**config_data["globals"])
     print(yaml.dump(global_config))
     redditors: typing.List[Redditor] = []
-    for r in config_data["redditors"]:
+    for r in config_data.get("redditors", []):
         redditor = Redditor(global_config.post_limit, **r)
         redditors.append(redditor)
     print(yaml.dump(redditors))
     subreddits: typing.List[Subreddit] = []
-    for s in config_data["subreddits"]:
+    for s in config_data.get("subreddits", []):
         subreddit = Subreddit(global_config.post_limit, **s)
         subreddits.append(subreddit)
     print(yaml.dump(subreddits))
     ignored_redditors: typing.List[IgnoredUser] = []
     if config_data["ignored_redditors"] is not None:
-        for igr in config_data["ignored_redditors"]:
+        for igr in config_data.get("ignored_redditors", []):
             ignored_redditor = IgnoredUser(**igr)
             ignored_redditors.append(ignored_redditor)
     print(yaml.dump(ignored_redditors))
     ignored_subreddits: typing.List[IgnoredSubreddit] = []
     if config_data["ignored_subreddits"] is not None:
-        for igs in config_data["ignored_subreddits"]:
+        for igs in config_data.get("ignored_subreddits", []):
             ignored_subreddit = IgnoredSubreddit(**igs)
             ignored_subreddits.append(ignored_subreddit)
     print(yaml.dump(ignored_subreddits))
