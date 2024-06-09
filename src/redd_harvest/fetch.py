@@ -1,10 +1,13 @@
 import hashlib
+import io
 import os
 import pprint
 import re
 import typing
 
-import urllib3
+import filetype
+import requests
+from tqdm import tqdm
 from urllib.parse import urlparse
 
 from redd_harvest.config import Link, SubSearch
@@ -13,7 +16,7 @@ from redd_harvest.post import Post
 NEW_SAVED = "NEW_SAVED"
 ALREADY_SAVED = "ALREADY_SAVED"
 SEEN_NOT_SAVED = "SEEN_NOT_SAVED"
-NEW_NOT_SAVED = "NEW_NOT_SAVED"
+NOT_SAVED = "NOT_SAVED"
 IGNORED = "IGNORED"
 BONK = "BONK"
 
@@ -26,54 +29,45 @@ class RetrievalStatus:
         self.digest: str = digest
 
 
-# def wget_file(url: str, outfile: str) -> bool:
-#    http = urllib3.PoolManager()
-#    rsp = http.request('GET', url, preload_content=False)
-#    with open(outfile, 'wb') as out:
-#        while True:
-#            data = rsp.read(64)
-#            if not data:
-#                break
-#            out.write(data)
-#    rsp.release_conn()
-#    return True
-
-
-def wget_data(url: str):
-    """Get raw data from the specified url."""
-    # TODO: refactor to use requests instead of urlllib3?
-    http = urllib3.PoolManager()
-    rsp = http.request("GET", url, preload_content=False)  # TODO: handle redirects
-    data = rsp.read()
-    rsp.release_conn()
-    return data
-
-
-def wget_page(url: str) -> str:
-    """Get the page from the given url; if it can't be decoded as a utf-8
-    string, this will fail and simply return an empty string.
-    """
-    # TODO: refactor to use requests instead of urlllib3?
-    # for debug... print(f'fetching page at {url}')
-    http = urllib3.PoolManager()
-    rsp = http.request("GET", url, preload_content=False)
-    try:
-        data = rsp.read().decode("utf-8")
-    except UnicodeDecodeError as e:
-        print(f"- page fetch status code: {rsp.status}")
-        print(f"- error decoding page at {url}: {e.reason}")
-        data = ""
-    rsp.release_conn()
-    return data
-
-
-def uri_validator(x: str) -> bool:
+def _uri_validator(x: str) -> bool:
     """Is it a valid URI?"""
     try:
         result = urlparse(x)
         return all([result.scheme, result.netloc, result.path])
-    except:
+    except Exception as _:
         return False
+
+
+def _wget_data(url: str, progress_bar: tqdm) -> bytes:
+    """Get raw data from the specified url."""
+    data = bytes()
+    with requests.get(url, stream=True, timeout=(5, 8)) as r:
+        r.raise_for_status()
+        total_size_bytes = int(r.headers.get("content-length", 0))
+        block_size = 16384  # 16 kibibytes
+        progress_bar.total = total_size_bytes
+        progress_bar.refresh()
+        # figure out better way of handling for extremely large file case
+        with io.BytesIO() as buf:
+            for chunk in r.iter_content(chunk_size=block_size):
+                # If you have chunk encoded response uncomment if
+                # and set chunk_size parameter to None.
+                # if chunk:
+                progress_bar.update(len(chunk))
+                buf.write(chunk)
+            data = buf.getvalue()
+    return data
+
+
+def _wget_page(url: str) -> str:
+    """Get the page from the given url; if an exception occurs, this will fail
+    and simply return an empty string.
+    """
+    data = ""
+    rsp = requests.get(url, timeout=(5, 8))
+    rsp.raise_for_status()
+    data = rsp.text
+    return data
 
 
 def get_url_from_page(page: str, subsearch: SubSearch) -> str:
@@ -89,7 +83,7 @@ def get_url_from_page(page: str, subsearch: SubSearch) -> str:
         # for debug... print(f'matched page contents: {pprint.pformat(matches)}')
         for match in matches:
             print(f"- validating matched page contents: {pprint.pformat(match)}")
-            if uri_validator(match):  # make sure the match is a valid url
+            if _uri_validator(match):  # make sure the match is a valid url
                 # return earliest match (some webpages will have duplicate matches)
                 return match.replace("&amp;", "&")
             else:
@@ -154,7 +148,7 @@ def get_direct_download_url(url: str, link: Link) -> typing.List[str]:
 
 
 def get_urls_from_media_metadata(
-    post_raw: typing.Dict[str, typing.Any]
+    post_raw: typing.Dict[str, typing.Any],
 ) -> typing.List[str]:
     """Extract urls from gallery item media metadata for highest available
     quality media.
@@ -195,22 +189,25 @@ def get_matching_urls_from_page(url: str, link: Link) -> typing.List[str]:
     """
     lower_url = url.lower()
     dl_urls: typing.List[str] = []
-    page = wget_page(url)
-    for ss in link.sub_searches:
-        dl_url: str = ""
-        if ss.extension is not None:  # match extension if provided
-            if re.search(f"^.*\\.{ss.extension.lower()}$", lower_url):
+    try:
+        page = _wget_page(url)
+        for ss in link.sub_searches:
+            dl_url: str = ""
+            if ss.extension is not None:  # match extension if provided
+                if re.search(f"^.*\\.{ss.extension.lower()}$", lower_url):
+                    dl_url = get_url_from_page(page, ss)
+            else:
                 dl_url = get_url_from_page(page, ss)
-        else:
-            dl_url = get_url_from_page(page, ss)
-        if dl_url != "" and dl_url not in dl_urls:  # append unique
-            dl_urls.append(dl_url)
-    # for debug... else: print(f'\'{lower_url}\' didn\'t match \'{link.base_url.lower()}\'')
+            if dl_url != "" and dl_url not in dl_urls:  # append unique
+                dl_urls.append(dl_url)
+        # for debug... else: print(f'\'{lower_url}\' didn\'t match \'{link.base_url.lower()}\'')
+    except Exception as e:
+        print(f"- error extracting urls from page at '{url}': {e}")
     return dl_urls
 
 
 def get_urls_from_media_reddit_video(
-    post_raw: typing.Dict[str, typing.Any]
+    post_raw: typing.Dict[str, typing.Any],
 ) -> typing.List[str]:
     """Extract urls from media.reddit_video for original media."""
     # debug... print(pprint.pformat(post_raw))
@@ -265,37 +262,103 @@ def get_all_matching_urls(post: Post, links: typing.List[Link]) -> typing.List[s
     return dl_urls
 
 
+def _filename_from_url(dl_url: str) -> str:
+    """Returns name of the file from the given url and removes properties,
+    if they exist in the url."""
+    filename = os.path.basename(dl_url)
+    if "?" in filename:
+        prop_index = filename.index("?")
+        if prop_index > 0:
+            filename = filename[:prop_index]
+    return filename
+
+
+def _dir_and_ext_by_type(
+    tmp_data: bytes, filename: str, sep_by_media: bool
+) -> typing.Tuple[str, str]:
+    """Given the file bytes and filename, determines a folder to sort media
+    into and determines an appropriate file extension."""
+    _, file_ext = os.path.splitext(filename)
+    file_ext = file_ext.lower()
+    if file_ext == ".jpeg":
+        file_ext = ".jpg"
+    media_dir = "."
+    if sep_by_media:
+        try:
+            data_kind = filetype.guess(tmp_data)
+            if filetype.is_image(tmp_data):
+                media_dir = "images"
+                if data_kind is not None:
+                    file_ext = f".{data_kind.extension}"
+            elif filetype.is_video(tmp_data):
+                media_dir = "videos"
+                if data_kind is not None:
+                    file_ext = f".{data_kind.extension}"
+            else:
+                media_dir = "unknown"
+        except Exception as e:
+            print(f"ERROR: exception raised while parsing filetype: {e}")
+            media_dir = "unknown"
+    return media_dir, file_ext
+
+
 def retrieve_content(
-    dl_folder: str, post: Post, links: typing.List[Link]
+    sep_by_media: bool,
+    dl_root: str,
+    dl_subdir: str,
+    post: Post,
+    links: typing.List[Link],
 ) -> typing.List[RetrievalStatus]:
     """Attempt to retrieve content from the given post, based on the provided
     list of Links to define desired content, and save matches in the given
     download folder. Returns a status.
     """
     result: typing.List[RetrievalStatus] = []
-    os.makedirs(dl_folder, 0o755, True)
+    os.makedirs(dl_root, 0o755, True)
 
     dl_urls = get_all_matching_urls(post, links)
     if dl_urls is not None and len(dl_urls) > 0:
         for dl_url in dl_urls:
-            filename = os.path.basename(dl_url)
-            if "?" in filename:
-                prop_index = filename.index("?")
-                if prop_index > 0:
-                    filename = filename[:prop_index]
-            _, file_ext = os.path.splitext(filename)
-            tmp_data = wget_data(dl_url)
-            tmp_digest = hashlib.sha1(tmp_data).hexdigest()
-            finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
-            if os.path.exists(finalfile):
-                result.append(
-                    RetrievalStatus(ALREADY_SAVED, dl_url, finalfile, tmp_digest)
+            filename = _filename_from_url(dl_url)
+            progress_bar = tqdm(unit="iB", unit_scale=True, colour="#546975")
+            try:
+                tmp_data = _wget_data(dl_url, progress_bar)
+                tmp_digest = hashlib.sha256(tmp_data).hexdigest()
+                media_dir, file_ext = _dir_and_ext_by_type(
+                    tmp_data, filename, sep_by_media
                 )
-            else:
-                with open(finalfile, "wb") as out:
-                    out.write(tmp_data)
-                result.append(RetrievalStatus(NEW_SAVED, dl_url, finalfile, tmp_digest))
+                dl_folder = os.path.normpath(
+                    os.sep.join([dl_root, media_dir, dl_subdir])
+                )
+                os.makedirs(dl_folder, 0o755, True)
+                finalfile = os.sep.join([dl_folder, f"{tmp_digest}{file_ext}"])
+                # if we already have at least one file with matching digest
+                if len(
+                    [
+                        file
+                        for file in os.listdir(dl_folder)
+                        if re.search(rf"{tmp_digest}", file)
+                    ]
+                ):
+                    result.append(
+                        RetrievalStatus(ALREADY_SAVED, dl_url, finalfile, tmp_digest)
+                    )
+                else:
+                    with open(finalfile, "wb") as out:
+                        out.write(tmp_data)
+                    result.append(
+                        RetrievalStatus(NEW_SAVED, dl_url, finalfile, tmp_digest)
+                    )
+                    progress_bar.colour = "#196593"
+                    progress_bar.refresh()
+                progress_bar.close()
+            except Exception as e:
+                print(f"- error fetching content from {post.url}: {e}")
+                result.append(RetrievalStatus(NOT_SAVED, post.url, "", ""))
+                progress_bar.colour = "#9042f5"
+                progress_bar.refresh()
+                progress_bar.close()
     else:
-        result.append(RetrievalStatus(NEW_NOT_SAVED, post.url, "", ""))
+        result.append(RetrievalStatus(NOT_SAVED, post.url, "", ""))
 
     return result

@@ -3,10 +3,15 @@ globals:
   # Used in the construction of the user-agent; this should coincide with the
   # name of the associated app created in your reddit account.
   app: redd-harvest
-  # Used in user-agent and reddit client construction (if username and password
-  # are not provided via environment variables to build a fully authenticated
-  # reddit client).
+  # Used in user-agent and reddit client construction (both username and
+  # password are required to build a fully authenticated reddit client).
   username: <put-your-username-here>
+  # Used to build a fully authenticated reddit client.
+  password: <put-your-password-here>
+  # Obtained from Reddit after setting up your script application.
+  client_id: <put-your-client-id-here>
+  # Obtained from Reddit after setting up your script application.
+  client_secret: <put-your-client-secret-here>
   # Default post limit; can be overwritten here, or individually at each
   # redditor/subreddit entry.
   post_limit: 5
@@ -19,6 +24,8 @@ globals:
   backoff_sleep: 0.1
   # Folder to use for saving content retrieved from submissions.
   download_folder: ~/.redd-harvest/data
+  # Within the download folder, store files by media type (image/video).
+  separate_media: true
   # By default pruning is disabled; if set to true, pruning of saved media is
   # executed before retrieving new posts. Pruning: if we can determine that an
   # ignored redditor posted in a subreddit that is being followed, attempt to
@@ -45,6 +52,10 @@ subreddits:
     # means <subreddit>/<redditor> for subreddits, and <redditor>/<subreddit>
     # for redditors. 'nested' is the default store_type for subreddits.
     store_type: nested
+    # When creating a folder for the downloaded files, use this as the folder
+    # name rather than the name of the subreddit/redditor; this is ignored when
+    # using store_type 'really flat' (see below).
+    alias: earthpapes
     search_criteria:
       # Post limit specified at the level of each entity takes precedence over
       # a globally defined post limit.
@@ -116,7 +127,10 @@ links:
         # ...so let's use this regex to try to find the url we really want
         # within the page. Regexes are treated as raw strings, so no
         # language-specific care in escaping needs to be taken; if it works on
-        # an online regex tester, there's a good chance it will work here.
+        # an online regex tester, there's a good chance it will work here; note
+        # that this application doesn't support capture groups; if groups are
+        # desired to be used, you must use non-capturing groups, like:
+        # `(?:some|thing)`.
         page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.mp4
   # Sometimes a site will host content from different domains/subdomains, so
   # we'll also trust imgur content from this base url...

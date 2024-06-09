@@ -10,7 +10,6 @@ from threading import Event
 import traceback
 
 import click
-import pandas as pd
 import praw
 
 from redd_harvest import fetch
@@ -18,7 +17,7 @@ from redd_harvest.config import ReddHarvestConfig, gather_config
 from redd_harvest.post import Post
 from redd_harvest.version import __version__
 
-DEFAULT_CONFIG_FILE = os.sep.join(["~", ".redd-harvest", "config", "redd.yml"])
+DEFAULT_CONFIG_FILE = os.sep.join(["~", ".config", "redd-harvest", "config.yml"])
 REDD_HARVEST_USER_AGENT_TEMPLATE = "python:$app:$ver (by /u/$username)"
 
 
@@ -26,29 +25,22 @@ def build_praw_client(redd_config: ReddHarvestConfig) -> praw.Reddit:
     """Build a praw reddit client based on available credentials and
     configuration.
     """
-    cid = os.getenv("REDD_HARVEST_CLIENT_ID")
-    cs = os.getenv("REDD_HARVEST_CLIENT_SECRET")
-    if cid is None or cs is None:
-        print(
-            "required client id or client secret not found in environment; aborting..."
-        )
-        return None
+    cid = redd_config.globals.client_id
+    cs = redd_config.globals.client_secret
+    assert (
+        cid is not None and len(cid) > 0 and cs is not None and len(cs) > 0
+    ), "client_id and client_secret are required configurations; aborting..."
 
-    u = os.getenv("REDD_HARVEST_USERNAME")
-    p = os.getenv("REDD_HARVEST_PASSWORD")
-    if u is None or p is None:
-        # If either username or password is missing from the environment, favor
-        # username parsed from the configuration.
-        print(
-            "username or password not found in environment, using username from configuration..."
-        )
-        u = redd_config.globals.username
-        ua = Template(REDD_HARVEST_USER_AGENT_TEMPLATE).substitute(
-            app=redd_config.globals.app,
-            ver=__version__,
-            username=u,
-        )
-        print(f"- constructed user-agent: '{ua}'")
+    u = redd_config.globals.username
+    p = redd_config.globals.password
+    ua = Template(REDD_HARVEST_USER_AGENT_TEMPLATE).substitute(
+        app=redd_config.globals.app,
+        ver=__version__,
+        username=u,
+    )
+    print(f"constructed user-agent: '{ua}'")
+    if p is None or len(p) < 1:
+        print("password not defined, continuing with unauthenticated client...")
         return praw.Reddit(
             client_id=cid,
             client_secret=cs,
@@ -57,12 +49,6 @@ def build_praw_client(redd_config: ReddHarvestConfig) -> praw.Reddit:
         )
 
     print("continuing with fully authenticated client...")
-    ua = Template(REDD_HARVEST_USER_AGENT_TEMPLATE).substitute(
-        app=redd_config.globals.app,
-        ver=__version__,
-        username=u,
-    )
-    print(f"- constructed user-agent: '{ua}'")
     return praw.Reddit(
         client_id=cid,
         client_secret=cs,
@@ -105,7 +91,7 @@ class Harvester:
         """Sets an internal flag for cleanly terminating."""
         return self.interrupt_flag
 
-    def sleep(self, timeout: float = None) -> bool:
+    def sleep(self, timeout: float = 1) -> bool:
         """Wrapper for the per-instance threading.Event()."""
         return self.sleepy.wait(timeout=timeout)
 
@@ -162,9 +148,14 @@ class Harvester:
             if entity_count > 0:
                 remaining = reddit.auth.limits.get("remaining", 0)
                 used = reddit.auth.limits.get("used", 0)
-                reset_timestamp = datetime.fromtimestamp(
-                    reddit.auth.limits.get("reset_timestamp", 0)
-                )
+                ts = reddit.auth.limits.get("reset_timestamp", 0)
+                tsf = 0.0
+                if ts is not None:
+                    try:
+                        tsf = float(ts)
+                    except Exception as _:
+                        tsf = 0.0
+                reset_timestamp = datetime.fromtimestamp(tsf)
                 print(
                     f"--- current rate limits: remaining - {remaining}, used - {used}, reset_timestamp = '{reset_timestamp}'"
                 )
@@ -178,8 +169,8 @@ class Harvester:
                 print("- interrupted, quitting early...")
                 break
             try:
-                entity.enrich(reddit)
-                if not entity.is_enriched():
+                entity.validate(reddit)
+                if not entity.is_valid():
                     print(
                         f"- trouble fetching submissions from '{entity.get_name()}'; continuing..."
                     )
@@ -191,7 +182,7 @@ class Harvester:
                 continue
 
             count = 0
-            for submission in entity.get_submissions():
+            for submission in entity.get_submissions(reddit):
                 if self.is_interrupted():
                     print("- interrupted, quitting early...")
                     break
@@ -208,14 +199,20 @@ class Harvester:
                             fetch.RetrievalStatus(fetch.BONK, post.url, "", "")
                         ]
                     else:
-                        dl_folder = redd_config.get_download_folder(entity, post)
+                        root_folder = redd_config.get_download_root()
+                        sub_folder = redd_config.get_download_sub_folder(entity, post)
                         retrieval_status = fetch.retrieve_content(
-                            f"{dl_folder}", post, redd_config.links
+                            redd_config.separate_media(),
+                            f"{root_folder}",
+                            f"{sub_folder}",
+                            post,
+                            redd_config.links,
                         )
                 for dl_status in retrieval_status:
                     print(
                         f"-- status: {dl_status.status}; source_url: {dl_status.source_url}"
                     )
+                    # not sure tracking post stats is interesting anymore
                     post_stats.append(
                         [
                             post.title,
@@ -236,23 +233,6 @@ class Harvester:
                     break
             print(f"--- processed {count} posts from '{entity.get_name()}'")
 
-        # TODO: there's probably something a lot cooler to be done w/ pandas here
-        posts_summary = pd.DataFrame(
-            post_stats,
-            columns=[
-                "title",
-                "author",
-                "subreddit",
-                "url",
-                "body",
-                "created",
-                "status",
-                "content_url",
-                "local_file",
-                "digest",
-            ],
-        )
-        print(posts_summary)
         return 0
 
 
@@ -263,9 +243,12 @@ def bootstrap_config() -> int:
     if os.path.exists(config_file):
         print(f"config '{config_file}' already exists, no action taken...")
         return 1
-    os.makedirs(os.path.dirname(config_file), 0o755, True)
+    os.makedirs(os.path.dirname(config_file), 0o700, True)
     data = pkg_files("redd_harvest.data").joinpath("example.yml").read_bytes()
-    with open(config_file, "wb") as out:
+    descriptor = os.open(
+        path=config_file, flags=(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), mode=0o600
+    )
+    with open(descriptor, "wb") as out:
         out.write(data)
     print(f"wrote example configuration to '{config_file}', check it out!")
     return 0
@@ -316,17 +299,14 @@ def run(
 
     print(f"using config file: {config}")
     redd_config = gather_config(config)
-    reddit = build_praw_client(redd_config)
-    if reddit is None:
-        return 1
-
     rc = 0
     try:
+        reddit = build_praw_client(redd_config)
         harvester = Harvester(interactive)
         rc = harvester.harvest(
             reddit, redd_config, subreddits_only, redditors_only, only_name
         )
-    except:
+    except Exception as _:
         traceback.print_exc()
         rc = 1
     return rc

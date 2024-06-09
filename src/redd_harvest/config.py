@@ -1,6 +1,7 @@
 import abc
 import os
 import shutil
+import stat
 from string import Template
 import typing
 
@@ -79,6 +80,9 @@ class Globals(yaml.YAMLObject):
     def __init__(self, **conf):
         self.app: str = conf.get("app", DEFAULT_REDD_HARVEST_APP)
         self.username: str = conf.get("username", DEFAULT_REDD_HARVEST_USERNAME)
+        self.password: str = conf.get("password", "")
+        self.client_id: str = conf.get("client_id", "")
+        self.client_secret: str = conf.get("client_secret", "")
         self.post_limit: int = conf.get("post_limit", DEFAULT_POST_LIMIT)
         self.rate_limit_max_wait: int = conf.get(
             "rate_limit_max_wait", DEFAULT_RATE_LIMIT_MAX_WAIT
@@ -87,6 +91,7 @@ class Globals(yaml.YAMLObject):
         self.download_folder: str = os.path.abspath(
             os.path.expanduser(conf.get("download_folder", DEFAULT_DOWNLOAD_FOLDER))
         )
+        self.separate_media: bool = conf.get("separate_media", True)
         self.bonk: bool = conf.get("bonk", False)
         if not isinstance(self.bonk, bool):
             self.bonk = False
@@ -114,7 +119,7 @@ class Link(yaml.YAMLObject):
         self.direct_dl_url_extensions: typing.List[str] = conf.get(
             "direct_dl_url_extensions", []
         )
-        searches: typing.List[SubSearch] = conf.get("sub_searches", [])
+        searches: typing.List[typing.Dict[str, str]] = conf.get("sub_searches", [])
         # redundant since we've initialized this above?
         self.sub_searches: typing.List[SubSearch] = []
         for search in searches:
@@ -151,14 +156,16 @@ class EntityInterface(metaclass=abc.ABCMeta):
             and callable(subclass.is_subreddit)
             or hasattr(subclass, "get_name")
             and callable(subclass.get_name)
+            or hasattr(subclass, "get_alias")
+            and callable(subclass.get_alias)
             or hasattr(subclass, "get_store_type")
             and callable(subclass.get_store_type)
             or hasattr(subclass, "get_search_criteria")
             and callable(subclass.get_search_criteria)
-            or hasattr(subclass, "enrich")
-            and callable(subclass.enrich)
-            or hasattr(subclass, "is_enriched")
-            and callable(subclass.is_enriched)
+            or hasattr(subclass, "validate")
+            and callable(subclass.validate)
+            or hasattr(subclass, "is_valid")
+            and callable(subclass.is_valid)
             or hasattr(subclass, "get_submissions")
             and callable(subclass.get_submissions)
             or hasattr(subclass, "get_download_folder")
@@ -182,6 +189,11 @@ class EntityInterface(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def get_alias(self) -> str:
+        """Alias of the entity"""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def get_store_type(self) -> str:
         """Storage type for the entity"""
         raise NotImplementedError
@@ -192,17 +204,19 @@ class EntityInterface(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich with real data from Reddit"""
+    def validate(self, reddit: praw.Reddit):
+        """Validate against Reddit"""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def is_enriched(self) -> bool:
-        """Whether or not the entity has been successfully enriched with real data from Reddit"""
+    def is_valid(self) -> bool:
+        """Whether or not the entity has been successfully validate against Reddit"""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions (posts) from the entity from Reddit"""
         raise NotImplementedError
 
@@ -210,20 +224,14 @@ class EntityInterface(metaclass=abc.ABCMeta):
         """Determine the intended download folder based on the provided post
         author and name of the subreddit where it was posted.
         """
-        dl_folder = post_author
-
-        if self.get_store_type() == STORE_TYPE_REALLY_FLAT:
-            dl_folder = "."
-        elif self.is_redditor():
-            dl_folder = os.sep.join([post_author, post_subreddit_name])
-            if self.get_store_type() == STORE_TYPE_FLAT:
-                dl_folder = post_author
-        elif self.is_subreddit():
-            dl_folder = os.sep.join([post_subreddit_name, post_author])
-            if self.get_store_type() == STORE_TYPE_FLAT:
-                dl_folder = post_subreddit_name
-
-        return f"{dl_folder}"
+        if self.get_store_type() == STORE_TYPE_FLAT:
+            return self.get_alias()
+        elif self.is_redditor() and self.get_store_type() == STORE_TYPE_FLAT:
+            return os.sep.join([self.get_alias(), post_subreddit_name])
+        elif self.is_subreddit() and self.get_store_type() == STORE_TYPE_FLAT:
+            return os.sep.join([self.get_alias(), post_author])
+        # STORE_TYPE_REALLY_FLAT
+        return "."
 
 
 class EntityMeta(type(yaml.YAMLObject), type(EntityInterface)):
@@ -235,6 +243,7 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def __init__(self, default_post_limit=DEFAULT_POST_LIMIT, **conf):
         self.name: str = conf.get("name", None)
+        self.alias: str = conf.get("alias", self.name)
         # redditors default to flat when not specified
         self.store_type: str = conf.get("store_type", STORE_TYPE_FLAT)
         if self.store_type not in STORE_TYPES:
@@ -246,7 +255,7 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
             # not all sort types supported for redditors; default to new if
             # unsupported
             self.search_criteria.sort_type = NEW
-        self.internal_redditor: praw.reddit.Redditor = None
+        self.valid: bool = False
 
     def is_redditor(self) -> bool:
         return True
@@ -257,54 +266,60 @@ class Redditor(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
     def get_name(self) -> str:
         return self.name
 
+    def get_alias(self) -> str:
+        return self.alias
+
     def get_store_type(self) -> str:
         return self.store_type
 
     def get_search_criteria(self) -> SearchCriteria:
         return self.search_criteria
 
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich the configured Redditor via a query to reddit."""
+    def validate(self, reddit: praw.Reddit):
+        """Validate the configured Redditor via a query to reddit."""
         print(f"attempting to get user {self.get_name()}")
-        self.internal_redditor = reddit.redditor(self.get_name())
+        r = reddit.redditor(self.get_name())
         rdtr_data = Template(REDDITOR_PRINT_TEMPLATE).substitute(
-            name=self.internal_redditor.name.strip(),
-            id=self.internal_redditor.id.strip(),
-            is_mod=self.internal_redditor.is_mod,
-            is_gold=self.internal_redditor.is_gold,
-            has_verified_email=self.internal_redditor.has_verified_email,
+            name=r.name.strip(),
+            id=r.id.strip(),
+            is_mod=r.is_mod,
+            is_gold=r.is_gold,
+            has_verified_email=r.has_verified_email,
         )
         print(rdtr_data)
+        self.valid = True
 
-    def is_enriched(self) -> bool:
-        """Was this successfully enriched."""
-        return False if self.internal_redditor is None else True
+    def is_valid(self) -> bool:
+        """Is this redditor valid?"""
+        return self.valid
 
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions for the Redditor based on it's configuration."""
         print(
             f"searching submissions from '{self.get_name().strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
         )
         if self.search_criteria.sort_type == NEW:
-            return self.internal_redditor.submissions.new(
+            return reddit.redditor(self.get_name()).submissions.new(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == HOT:
-            return self.internal_redditor.submissions.hot(
+            return reddit.redditor(self.get_name()).submissions.hot(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == TOP:
-            return self.internal_redditor.submissions.top(
+            return reddit.redditor(self.get_name()).submissions.top(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == CONTROVERSIAL:
-            return self.internal_redditor.submissions.controversial(
+            return reddit.redditor(self.get_name()).submissions.controversial(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == STREAM:
-            return self.internal_redditor.stream.submissions()
+            return reddit.redditor(self.get_name()).stream.submissions()
         else:  # default to new
-            return self.internal_redditor.submissions.new(
+            return reddit.redditor(self.get_name()).submissions.new(
                 limit=self.search_criteria.post_limit
             )
 
@@ -314,6 +329,7 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
 
     def __init__(self, default_post_limit=DEFAULT_POST_LIMIT, **conf):
         self.name: str = conf.get("name", None)
+        self.alias: str = conf.get("alias", self.name)
         # subreddits default to nested when not specified
         self.store_type: str = conf.get("store_type", STORE_TYPE_NESTED)
         if self.store_type not in STORE_TYPES:
@@ -321,7 +337,7 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
             self.store_type = STORE_TYPE_NESTED
         sc = conf.get("search_criteria", {})
         self.search_criteria: SearchCriteria = SearchCriteria(default_post_limit, **sc)
-        self.internal_subreddit: praw.reddit.Subreddit = None
+        self.valid: bool = False
 
     def is_redditor(self) -> bool:
         return False
@@ -332,60 +348,74 @@ class Subreddit(yaml.YAMLObject, EntityInterface, metaclass=EntityMeta):
     def get_name(self) -> str:
         return self.name
 
+    def get_alias(self) -> str:
+        return self.alias
+
     def get_store_type(self) -> str:
         return self.store_type
 
     def get_search_criteria(self) -> SearchCriteria:
         return self.search_criteria
 
-    def enrich(self, reddit: praw.Reddit):
-        """Enrich the configured Subreddit via a query to reddit."""
+    def validate(self, reddit: praw.Reddit):
+        """Validate the configured Subreddit via a query to reddit."""
         print(f"attempting to get subreddit {self.get_name()}")
-        self.internal_subreddit = reddit.subreddit(self.get_name())
+        s = reddit.subreddit(self.get_name())
         subr_data = Template(SUBREDDIT_PRINT_TEMPLATE).substitute(
-            display_name=self.internal_subreddit.display_name.strip(),
-            id=self.internal_subreddit.id.strip(),
-            name=self.internal_subreddit.name.strip(),
-            over18=self.internal_subreddit.over18,
-            description=(self.internal_subreddit.description[:300] + "...")
-            if len(self.internal_subreddit.description) > 300
-            else self.internal_subreddit.description,
+            display_name=s.display_name.strip(),
+            id=s.id.strip(),
+            name=s.name.strip(),
+            over18=s.over18,
+            description=(s.description[:300] + "...")
+            if len(s.description) > 300
+            else s.description,
         )
         print(subr_data)
+        self.valid = True
 
-    def is_enriched(self) -> bool:
-        """Was this successfully enriched."""
-        return False if self.internal_subreddit is None else True
+    def is_valid(self) -> bool:
+        """Is this subreddit valid?"""
+        return self.valid
 
-    def get_submissions(self) -> typing.List[praw.reddit.models.Submission]:
+    def get_submissions(
+        self, reddit: praw.Reddit
+    ) -> typing.List[praw.reddit.models.Submission]:
         """Get submissions for the Subreddit based on it's configuration."""
         print(
-            f"searching submissions from '{self.internal_subreddit.display_name.strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
+            f"searching submissions from '{reddit.subreddit(self.get_name()).display_name.strip()}' by {self.search_criteria.sort_type}/{self.search_criteria.sort_toggle}"
         )
         if self.search_criteria.sort_type == NEW:
-            return self.internal_subreddit.new(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).new(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == HOT:
-            return self.internal_subreddit.hot(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).hot(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == TOP:
-            return self.internal_subreddit.top(
+            return reddit.subreddit(self.get_name()).top(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == CONTROVERSIAL:
-            return self.internal_subreddit.controversial(
+            return reddit.subreddit(self.get_name()).controversial(
                 self.search_criteria.sort_toggle, limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == STREAM:
-            return self.internal_subreddit.stream.submissions()
+            return reddit.subreddit(self.get_name()).stream.submissions()
         elif self.search_criteria.sort_type == RISING:
-            return self.internal_subreddit.rising(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).rising(
+                limit=self.search_criteria.post_limit
+            )
         elif self.search_criteria.sort_type == RANDOM_RISING:
-            return self.internal_subreddit.random_rising(
+            return reddit.subreddit(self.get_name()).random_rising(
                 limit=self.search_criteria.post_limit
             )
         elif self.search_criteria.sort_type == RANDOM:
-            return self.internal_subreddit.random()
+            return reddit.subreddit(self.get_name()).random()
         else:  # default to new
-            return self.internal_subreddit.new(limit=self.search_criteria.post_limit)
+            return reddit.subreddit(self.get_name()).new(
+                limit=self.search_criteria.post_limit
+            )
         # TODO: possibly handle 'front'?
 
 
@@ -426,34 +456,34 @@ class ReddHarvestConfig:
         """
         entity_list: typing.List[EntityInterface] = []
 
-        print("---")
-        print("determining ignorable entities")
-        print("---")
+        # print("---")
+        # print("determining ignorable entities")
+        # print("---")
         for user in self.redditors:
-            print(f"- parsing redditor '{user.name}'")
+            # print(f"- parsing redditor '{user.name}'")
             ignore = False
             for igr in self.ignored_redditors:
                 if igr.name.strip() == user.name.strip():
                     ignore = True
                     break
             if ignore:
-                print("-- ignoring...")
+                # print("-- ignoring...")
                 continue
             entity_list.append(user)
 
         for sub in self.subreddits:
-            print(f"- parsing subreddit '{sub.name}'")
+            # print(f"- parsing subreddit '{sub.name}'")
             ignore = False
             for igs in self.ignored_subreddits:
                 if igs.name.strip() == sub.name.strip():
                     ignore = True
                     break
             if ignore:
-                print("-- ignoring...")
+                # print("-- ignoring...")
                 continue
             entity_list.append(sub)
-        print("---")
-        print()
+        # print("---")
+        # print()
 
         return entity_list
 
@@ -465,29 +495,147 @@ class ReddHarvestConfig:
         attempt to remove just posts from that subreddit from where nested
         posts would be saved.
         """
-        print("---")
-        print("pruning detectable content for ignored entities")
-        print("---")
-        for sub in self.subreddits:
-            for igr in self.ignored_redditors:
-                ignore_folder = (
-                    f"{self.globals.download_folder}/{sub.name}/{igr.name.strip()}"
+        prune = []
+        for igr in self.ignored_redditors:
+            prune.append(os.sep.join([self.globals.download_folder, igr.name.strip()]))
+            prune.append(
+                os.sep.join([self.globals.download_folder, "images", igr.name.strip()])
+            )
+            prune.append(
+                os.sep.join([self.globals.download_folder, "videos", igr.name.strip()])
+            )
+            prune.append(
+                os.sep.join([self.globals.download_folder, "unknown", igr.name.strip()])
+            )
+            for sub in self.subreddits:
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
                 )
-                print(f"- checking for folder: {ignore_folder}")
-                if os.path.exists(ignore_folder):
-                    print(f"--- removing folder: {ignore_folder}")
-                    shutil.rmtree(ignore_folder)
-        for user in self.redditors:
-            for igs in self.ignored_subreddits:
-                ignore_folder = (
-                    f"{self.globals.download_folder}/{user.name}/{igs.name.strip()}"
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "images",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
                 )
-                print(f"- checking for folder: {ignore_folder}")
-                if os.path.exists(ignore_folder):
-                    print(f"--- removing folder: {ignore_folder}")
-                    shutil.rmtree(ignore_folder)
-        print("---")
-        print()
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "videos",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "unknown",
+                            sub.name,
+                            igr.name.strip(),
+                        ]
+                    )
+                )
+        for igs in self.ignored_subreddits:
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "images",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "videos",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            prune.append(
+                os.sep.join(
+                    [
+                        self.globals.download_folder,
+                        "unknown",
+                        igs.name.strip(),
+                    ]
+                )
+            )
+            for user in self.redditors:
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "images",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "videos",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+                prune.append(
+                    os.sep.join(
+                        [
+                            self.globals.download_folder,
+                            "unknown",
+                            user.name,
+                            igs.name.strip(),
+                        ]
+                    )
+                )
+        must_delete = []
+        for p in prune:
+            if os.path.exists(p):
+                must_delete.append(p)
+        if len(must_delete) > 0:
+            print("---")
+            print("pruning detectable content for ignored entities")
+            print("---")
+            for p in must_delete:
+                print(f"--- removing folder: {p}")
+                shutil.rmtree(p)
+            print("---")
+            print()
 
     def should_ignore_post(self, post: Post) -> bool:
         for igr in self.ignored_redditors:
@@ -498,7 +646,14 @@ class ReddHarvestConfig:
                 return True
         return False
 
-    def get_download_folder(self, entity: EntityInterface, post: Post) -> str:
+    def separate_media(self) -> bool:
+        return self.globals.separate_media
+
+    def get_download_root(self) -> str:
+        """Get the root download folder."""
+        return self.globals.download_folder
+
+    def get_download_sub_folder(self, entity: EntityInterface, post: Post) -> str:
         """For a given entity and post, return the folder that should be used
         to save content from the post.
         """
@@ -521,15 +676,33 @@ class ReddHarvestConfig:
                     break
         else:  # else disabled or we can just use as-is
             pass
-        return os.path.normpath(
-            os.sep.join([self.globals.download_folder, dl_sub_folder])
+        return os.path.normpath(dl_sub_folder)
+
+
+def _make_file_private(file: str):
+    st = os.stat(file)
+    if bool(
+        st.st_mode
+        & sum(
+            [
+                stat.S_IRGRP,
+                stat.S_IWGRP,
+                stat.S_IXGRP,
+                stat.S_IROTH,
+                stat.S_IWOTH,
+                stat.S_IXOTH,
+            ]
         )
+    ):
+        print(f"making config file {file} private as it contains sensitive information")
+        os.chmod(file, 0o600)
 
 
 def gather_config(config_file: str) -> ReddHarvestConfig:
     """Gather configuration from the specified file."""
     config_data = {}
     file = os.path.abspath(os.path.expanduser(config_file))
+    _make_file_private(file)
     with open(file, "r") as c:
         yaml.add_path_resolver("!global", ["globals"], dict)
         yaml.add_path_resolver("!redditor", ["redditors"], list)
@@ -539,40 +712,40 @@ def gather_config(config_file: str) -> ReddHarvestConfig:
         yaml.add_path_resolver("!link", ["links"], list)
         config_data = yaml.safe_load(c)
 
-    print("---")
-    print("resolved configuration")
-    print("---")
+    # print("---")
+    # print("resolved configuration")
+    # print("---")
     global_config = Globals(**config_data["globals"])
-    print(yaml.dump(global_config))
+    # print(yaml.dump(global_config))
     redditors: typing.List[Redditor] = []
-    for r in config_data["redditors"]:
+    for r in config_data.get("redditors", []):
         redditor = Redditor(global_config.post_limit, **r)
         redditors.append(redditor)
-    print(yaml.dump(redditors))
+    # print(yaml.dump(redditors))
     subreddits: typing.List[Subreddit] = []
-    for s in config_data["subreddits"]:
+    for s in config_data.get("subreddits", []):
         subreddit = Subreddit(global_config.post_limit, **s)
         subreddits.append(subreddit)
-    print(yaml.dump(subreddits))
+    # print(yaml.dump(subreddits))
     ignored_redditors: typing.List[IgnoredUser] = []
     if config_data["ignored_redditors"] is not None:
-        for igr in config_data["ignored_redditors"]:
+        for igr in config_data.get("ignored_redditors", []):
             ignored_redditor = IgnoredUser(**igr)
             ignored_redditors.append(ignored_redditor)
-    print(yaml.dump(ignored_redditors))
+    # print(yaml.dump(ignored_redditors))
     ignored_subreddits: typing.List[IgnoredSubreddit] = []
     if config_data["ignored_subreddits"] is not None:
-        for igs in config_data["ignored_subreddits"]:
+        for igs in config_data.get("ignored_subreddits", []):
             ignored_subreddit = IgnoredSubreddit(**igs)
             ignored_subreddits.append(ignored_subreddit)
-    print(yaml.dump(ignored_subreddits))
+    # print(yaml.dump(ignored_subreddits))
     links: typing.List[Link] = []
-    for l in config_data["links"]:
-        link = Link(**l)
+    for ln in config_data["links"]:
+        link = Link(**ln)
         links.append(link)
-    print(yaml.dump(links))
-    print("---")
-    print()
+    # print(yaml.dump(links))
+    # print("---")
+    # print()
 
     return ReddHarvestConfig(
         global_config,

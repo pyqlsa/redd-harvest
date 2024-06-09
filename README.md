@@ -30,8 +30,8 @@ Commands:
   setup  Bootstrap an example config in the default location.
 
 Options for 'run':
-  -c, --config FILE      Path to config file (default: ~/.redd-
-                         harvest/config/redd.yml).
+  -c, --config FILE      Path to config file (default: ~/.config/redd-
+                         harvest/config.yml).
   -s, --subreddits-only  Only download from configured subreddits (useful in
                          testing).
   -r, --redditors-only   Only download from configured redditors (useful in
@@ -54,9 +54,9 @@ Before jumping in and running this, since this interacts with the Reddit API, yo
 
 Next, at a minimum, you need a Client ID & Client Secret to access Reddit's API as a *script* application (that's what this is!).  If you don't already have those, follow Reddit's [First Steps Guide](https://github.com/reddit/reddit/wiki/OAuth2-Quick-Start-Example#first-steps) to create them.
 
-Once you have a Client ID & Client Secret, these can be provided to `redd-harvest` via the `REDD_HARVEST_CLIENT_ID` and `REDD_HARVEST_CLIENT_SECRET` environment variables, respectively.  This is enough to get you a read-only client to start running.
+Once you have a Client ID & Client Secret, these must be provided to `redd-harvest` via its configuration file.  This is enough to get you a read-only client to start running.
 
-If an authorized client is desired, you'll also need to provide your username and password via the `REDD_HARVEST_USERNAME` and `REDD_HARVEST_PASSWORD` environment variables, respectively.  Currently, `redd-harvest` doesn't benefit much from being fully authenticated/authorized, except for seeing an increased upper bound for Reddit's API rate limit.
+If an authorized client is desired, you'll also need to provide your username and password via the the configuration file, as well.  Currently, `redd-harvest` doesn't benefit much from being fully authenticated/authorized, except for seeing an increased upper bound for Reddit's API rate limit.
 
 ## Config File Structure
 ```yaml
@@ -65,10 +65,15 @@ globals:
   # Used in the construction of the user-agent; this should coincide with the
   # name of the associated app created in your reddit account.
   app: redd-harvest
-  # Used in user-agent and reddit client construction (if username and password
-  # are not provided via environment variables to build a fully authenticated
-  # reddit client).
+  # Used in user-agent and reddit client construction (both username and
+  # password are required to build a fully authenticated reddit client).
   username: <put-your-username-here>
+  # Used to build a fully authenticated reddit client.
+  password: <put-your-password-here>
+  # Obtained from Reddit after setting up your script application.
+  client_id: <put-your-client-id-here>
+  # Obtained from Reddit after setting up your script application.
+  client_secret: <put-your-client-secret-here>
   # Default post limit; can be overwritten here, or individually at each
   # redditor/subreddit entry.
   post_limit: 5
@@ -81,6 +86,8 @@ globals:
   backoff_sleep: 0.1
   # Folder to use for saving content retrieved from submissions.
   download_folder: ~/.redd-harvest/data
+  # Within the download folder, store files by media type (image/video).
+  separate_media: true
   # By default pruning is disabled; if set to true, pruning of saved media is
   # executed before retrieving new posts. Pruning: if we can determine that an
   # ignored redditor posted in a subreddit that is being followed, attempt to
@@ -107,6 +114,10 @@ subreddits:
     # means <subreddit>/<redditor> for subreddits, and <redditor>/<subreddit>
     # for redditors. 'nested' is the default store_type for subreddits.
     store_type: nested
+    # When creating a folder for the downloaded files, use this as the folder
+    # name rather than the name of the subreddit/redditor; this is ignored when
+    # using store_type 'really flat' (see below).
+    alias: earthpapes
     search_criteria:
       # Post limit specified at the level of each entity takes precedence over
       # a globally defined post limit.
@@ -178,7 +189,10 @@ links:
         # ...so let's use this regex to try to find the url we really want
         # within the page. Regexes are treated as raw strings, so no
         # language-specific care in escaping needs to be taken; if it works on
-        # an online regex tester, there's a good chance it will work here.
+        # an online regex tester, there's a good chance it will work here; note
+        # that this application doesn't support capture groups; if groups are
+        # desired to be used, you must use non-capturing groups, like:
+        # `(?:some|thing)`.
         page_search_regex: https://i\.imgur\.com/[0-9a-zA-Z]+\.mp4
   # Sometimes a site will host content from different domains/subdomains, so
   # we'll also trust imgur content from this base url...
@@ -199,17 +213,13 @@ links:
 
 # Behavior
 ## Saving content
-When media files are saved, they are named by their SHA1 hash.
+When media files are saved, they are named by their SHA256 hash.
 
 Instead of maintaining a separate database to track what content have already been encountered, this was chosen as a lazy means of deduplicating content.  Deduplication of files only occurs within a single given folder (i.e. deduplication does not occur across folders once a final download location is chosen based on the configuration).
 
 Media file hashes are calculated before they are written to disk, so this also has a positive side effect of reducing writes to your filesystem.  Even though they're not written to disk, the media needs to be downloaded in order to calculate the hash, so this will still tax the network.
 
-Another side effect of this scheme is that if you've downloaded some content that you're not interested in keeping, you can prevent `redd-harvest` from continuing to attempt to save the content by truncating the file in place.  If the content is ever encountered again, `redd-harvest` will think it already has a copy because a file name with the SHA1 already exists in the folder.  It's basically a lazy strategy for being able to ignore specific files.
+Another side effect of this scheme is that if you've downloaded some content that you're not interested in keeping, you can prevent `redd-harvest` from continuing to attempt to save the content by truncating the file in place.  If the content is ever encountered again, `redd-harvest` will think it already has a copy because a file name with the SHA256 already exists in the folder.  It's basically a lazy strategy for being able to ignore specific files.
 
 ## How is it intended to run?
-This is designed as a one-shot tool that retrieves content from Reddit serially.
-
-Since content retrieval executes serially, a sort of parallelism can be accomplished by running multiple instances each with a separate set of configured redditors and/or subreddits to follow.  In this scenario, content deduplication will likely become more difficult for this tool to figure out itself.  Scaling horizontally in this manner might be easier with something like a containerized deployment.  Providing `redd-harvest` in a container is on the to-do list.
-
-If it's desired to run this continuosly, consider scheduling execution with cron or using a container orchestrator (if you've built your own image, or once an image is provided) with the ability to restart the container after it has stopped.  Features may be added in the future to more elegantly run `redd-harvest` as a background service.
+This is designed as a one-shot tool that retrieves content from Reddit, serially.
